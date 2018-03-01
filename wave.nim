@@ -1,32 +1,98 @@
 
 import streams
 
-
+## RIFF header size, for PCM type (non-PCM types have 2 additional bytes)
+## Note that we are taking a lot of liberties here because "technically" RIFF
+## can have any arbitrary size
 const RIFF_HEADER_SIZE = 43
+
+const DEFAULT_CHANNELS = 1
+const DEFAULT_RATE = 8000
+const DEFAULT_WIDTH = 1
 
 type
   HeaderType = enum
+    ## Type of the header (and implicitly, data endianess).
+    ## htRIFF and htRIFX have headers and htNONE has no header.
+    ##
+    ## The difference between RIFF and RIFX is that in RIFF files, data
+    ## is little endiar, and RIFX is big endian
     htRIFF
     htRIFX
     htNONE
 
+  StreamMode = enum
+    ## Stream mode. Readable, writable or both.
+    smRead,
+    smWrite,
+    smReadWrite
+
+  WaveParametersObj = object
+    ## Wave file parameters
+    nsamples : uint32      # number of samples
+    channels : uint16      # number of channels
+    width : uint16         # number of bytes per sample
+    rate : uint32          # sample rate
+    endianness : Endianness # endianness
+  WaveParameters = ref WaveParametersObj
+
   WaveObj = object
-    nsamples : uint32
-    channels : uint16
-    width : uint16
-    rate : uint32
-    endianess : Endianness
+    ## A "Wave" object. Holds wave file parameters
+    parameters : WaveParameters
     stream : FileStream
-    hasHeader : bool
+    header : HeaderType
     seekable : bool
+    immediateUpdate : bool
+    mode : StreamMode
   Wave = ref WaveObj
 
-  Frame = object
+  Sample = object
+    ## One sample. The size of "data" is channles * width
     data : seq[byte]
 
-## (Re)parse the header. This will seek back to the beginning and parse the
-## header.
+# property getters and setters
+proc channels*(self : Wave) : uint16 = 
+  return self.parameters.channels
+
+proc `channels=`*(self : Wave, c : uint16) = 
+  if self.mode == smREAD:
+    raise
+  self.parameters.channels = c
+
+proc width(self : Wave) : uint16 = 
+  return self.parameters.width
+
+proc `width=`*(self : Wave, w : uint16) = 
+  if self.mode == smREAD:
+    raise
+  self.parameters.width = w
+
+proc rate(self : Wave) : uint32 = 
+  return self.parameters.rate
+
+proc `rate=`*(self : Wave, r : uint32) = 
+  if self.mode == smREAD:
+    raise
+  self.parameters.rate = r
+
+proc nsamples(self : Wave) : uint32 = 
+  return self.parameters.nsamples
+
+proc endianness(self : Wave) : Endianness = 
+  return self.parameters.endianness
+
+proc `endianness=`(self : Wave, e : Endianness) = 
+  if self.mode == smREAD:
+    raise
+  self.parameters.endianness = e
+
+proc newWave() : Wave = 
+  result = new Wave
+  result.parameters = new WaveParameters
+
 proc parseHeader(self : Wave) = 
+  ## (Re)parse the header. This will seek back to the beginning and parse the
+  ## header.
   var buf : string
   var int32arr : array[4, uint8]
   var int16arr : array[2, uint8]
@@ -59,6 +125,12 @@ proc parseHeader(self : Wave) =
         int16arr[i] = cast[uint8](self.stream.readChar())
     return cast[uint16](int16arr)
 
+  self.header = htNONE
+  self.parameters.channels = DEFAULT_CHANNELS
+  self.parameters.width = DEFAULT_WIDTH
+  self.parameters.rate = DEFAULT_RATE
+  self.parameters.endianness = littleEndian
+
   self.stream.setPosition(0)
 
   # Check for RIFF string
@@ -68,14 +140,10 @@ proc parseHeader(self : Wave) =
   elif buf == "RIFX":
     ht = htRIFX
   else:
-    self.hasHeader = false
-    self.channels = 0
-    self.width = 0
-    self.rate = 0
-    self.endianess = littleEndian
+    # No header. Assume nothing. Return.
     return
-  # we assume RIFF for now
 
+  self.header = ht
 
   # chunk size
   chunksize = readUInt32()
@@ -100,10 +168,10 @@ proc parseHeader(self : Wave) =
     raise
 
   # Channels
-  self.channels = readUInt16()
+  self.parameters.channels = readUInt16()
 
   # Rate
-  self.rate = readUInt32()
+  self.parameters.rate = readUInt32()
 
   # Byte rate. Redundant: this is equal to "rate * channels * width"
   discard readUInt32()
@@ -112,7 +180,7 @@ proc parseHeader(self : Wave) =
   discard readUInt16()
 
   # Bits per sample. We store bytes per sample.
-  self.width = readUInt16() div 8
+  self.parameters.width = readUInt16() div 8
   
   # Only available when type != PCM
   # discard readUInt16()
@@ -125,36 +193,69 @@ proc parseHeader(self : Wave) =
   # Size of data. channels * width * number of samples
   datasize = readUInt32()
 
-  self.nsamples = datasize div (self.channels * self.width)
+  self.parameters.nsamples = datasize div (self.channels * self.width)
 
   # set seek position, just in case
   self.stream.setPosition(RIFF_HEADER_SIZE)
 
 proc open(self : Wave, file : string) = 
+  ## Open a wav file for reading. The header is automatically parsed
   self.stream = newFileStream(file)
   parseHeader(self)
 
-proc isOpen(self : Wave) : bool =  self.stream != nil
+proc flush(self : Wave) = 
+  ## Flush wav file
+  self.stream.flush()
 
-proc readFrames(self : Wave, n : int) : seq[Frame] = 
+proc close(self : Wave) = 
+  ## Close wav file
+  self.flush()
+  self.stream.close()
+  self.stream = nil
+
+
+proc isOpen(self : Wave) : bool =
+  ## Returns true if the file is open
+  self.stream != nil
+
+proc readFrames(self : Wave, n : int) : seq[Sample] = 
+  ## Read n sample from file. File must already be open.
   if not self.isOpen():
     raise
 
   result = @[]
 
   for i in 1..n:
-    var frame : Frame
-    frame.data = @[]
+    var sample : Sample
+    sample.data = @[]
     for byte in self.stream.readStr(cast[int](self.width * self.channels)):
-      frame.data.add(cast[uint8](byte))
-    result.add(frame)
+      sample.data.add(cast[uint8](byte))
+    result.add(sample)
+
+proc readAll(self : Wave) : seq[Sample] = 
+  ## Read all samples, from current position to end.
+  if not self.isOpen():
+    raise
+
+  result = @[]
+
+  while not self.stream.atEnd():
+    var sample : Sample
+    sample.data = @[]
+    for byte in self.stream.readStr(cast[int](self.width * self.channels)):
+      sample.data.add(cast[uint8](byte))
+    result.add(sample)
 
 proc rewind(self : Wave) = 
-  discard
+  ## This is wrong!
+  self.stream.setPosition(0)
 
-var wav = new Wave
 
+var wav = newWave()
 wav.open("Front_Center.wav")
 var frs = wav.readFrames(10000)
+var al = wav.readAll()
+wav.close()
 
+echo len(al)
 
