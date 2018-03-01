@@ -7,6 +7,7 @@
 ##
 
 import streams
+import macros
 
 const RIFF_HEADER_SIZE* = 43 ##RIFF header size, for PCM type (non-PCM types have 2 additional bytes)
 ##Note that we are taking a lot of liberties here because "technically" RIFF
@@ -55,6 +56,34 @@ type
   Sample* = object
     ## One sample. The size of "data" is channles * width
     data : seq[byte]
+
+  WaveException = object of Exception
+    error* : int
+
+macro checkWritable(t : untyped) : untyped = 
+  ## Pragma macro that checks if wav is writable before allowing writes
+  var node =  parseStmt("""
+if self.mode == smREAD:
+  waveErr("Not writable")
+""")
+  insert(body(t), 0, node)
+  result = t
+
+macro checkOpen(t : untyped) : untyped = 
+  ## Pragma macro that checks if stream is open
+  var node =  parseStmt("""
+if not self.isOpen():
+  waveErr("Stream not open")
+""")
+  insert(body(t), 0, node)
+  result = t
+
+proc waveErr(s : string, error : int = 0) = 
+  var e = new WaveException
+  e.msg = s
+  e.error = error
+  raise e
+
 
 # property getters and setters
 proc channels*(self : Wave) : uint16 = 
@@ -224,7 +253,7 @@ proc isOpen*(self : Wave) : bool =
   ## Returns true if the file is open
   self.stream != nil
 
-proc readFrames*(self : Wave, n : int) : seq[Sample] = 
+proc readFrames*(self : Wave, n : int) : seq[Sample] {.checkOpen.} = 
   ## Read n sample from file. File must already be open.
   if not self.isOpen():
     raise
@@ -260,11 +289,19 @@ proc rewind*(self : Wave) =
   else:
     self.stream.setPosition(RIFF_HEADER_SIZE)
 
+proc writeFrames(self : Wave, data : string) {.checkWritable.} = 
+  discard
+
+proc writeFrames(self : Wave, samples : seq[Sample]) = 
+  discard
 
 var wav = newWave()
+discard wav.readFrames(10)
+
 wav.open("Front_Center.wav")
 var frs = wav.readFrames(10000)
 var al = wav.readAll()
+wav.writeFrames("foo")
 wav.close()
 
 echo len(al)
