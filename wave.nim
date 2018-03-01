@@ -1,17 +1,23 @@
 
+##-----------------------------------------------------------------------------
+## wave.nim
+##-----------------------------------------------------------------------------
+##
+##wave.nim provides a convenient API for reading and writing "wav" files
+##
+
 import streams
 
-## RIFF header size, for PCM type (non-PCM types have 2 additional bytes)
-## Note that we are taking a lot of liberties here because "technically" RIFF
-## can have any arbitrary size
-const RIFF_HEADER_SIZE = 43
+const RIFF_HEADER_SIZE* = 43 ##RIFF header size, for PCM type (non-PCM types have 2 additional bytes)
+##Note that we are taking a lot of liberties here because "technically" RIFF
+##can have any arbitrary size
 
-const DEFAULT_CHANNELS = 1
-const DEFAULT_RATE = 8000
-const DEFAULT_WIDTH = 1
+const DEFAULT_CHANNELS* = 1
+const DEFAULT_RATE* = 8000
+const DEFAULT_WIDTH* = 1
 
 type
-  HeaderType = enum
+  HeaderType* = enum
     ## Type of the header (and implicitly, data endianess).
     ## htRIFF and htRIFX have headers and htNONE has no header.
     ##
@@ -21,22 +27,22 @@ type
     htRIFX
     htNONE
 
-  StreamMode = enum
+  StreamMode* = enum
     ## Stream mode. Readable, writable or both.
     smRead,
     smWrite,
     smReadWrite
 
-  WaveParametersObj = object
+  WaveParametersObj* = object
     ## Wave file parameters
     nsamples : uint32      # number of samples
     channels : uint16      # number of channels
     width : uint16         # number of bytes per sample
     rate : uint32          # sample rate
     endianness : Endianness # endianness
-  WaveParameters = ref WaveParametersObj
+  WaveParameters* = ref WaveParametersObj
 
-  WaveObj = object
+  WaveObj* = object
     ## A "Wave" object. Holds wave file parameters
     parameters : WaveParameters
     stream : FileStream
@@ -44,9 +50,9 @@ type
     seekable : bool
     immediateUpdate : bool
     mode : StreamMode
-  Wave = ref WaveObj
+  Wave* = ref WaveObj
 
-  Sample = object
+  Sample* = object
     ## One sample. The size of "data" is channles * width
     data : seq[byte]
 
@@ -59,7 +65,7 @@ proc `channels=`*(self : Wave, c : uint16) =
     raise
   self.parameters.channels = c
 
-proc width(self : Wave) : uint16 = 
+proc width*(self : Wave) : uint16 = 
   return self.parameters.width
 
 proc `width=`*(self : Wave, w : uint16) = 
@@ -67,7 +73,7 @@ proc `width=`*(self : Wave, w : uint16) =
     raise
   self.parameters.width = w
 
-proc rate(self : Wave) : uint32 = 
+proc rate*(self : Wave) : uint32 = 
   return self.parameters.rate
 
 proc `rate=`*(self : Wave, r : uint32) = 
@@ -75,13 +81,13 @@ proc `rate=`*(self : Wave, r : uint32) =
     raise
   self.parameters.rate = r
 
-proc nsamples(self : Wave) : uint32 = 
+proc nsamples*(self : Wave) : uint32 = 
   return self.parameters.nsamples
 
-proc endianness(self : Wave) : Endianness = 
+proc endianness*(self : Wave) : Endianness = 
   return self.parameters.endianness
 
-proc `endianness=`(self : Wave, e : Endianness) = 
+proc `endianness=`*(self : Wave, e : Endianness) = 
   if self.mode == smREAD:
     raise
   self.parameters.endianness = e
@@ -198,27 +204,27 @@ proc parseHeader(self : Wave) =
   # set seek position, just in case
   self.stream.setPosition(RIFF_HEADER_SIZE)
 
-proc open(self : Wave, file : string) = 
+proc open*(self : Wave, file : string) = 
   ## Open a wav file for reading. The header is automatically parsed
   self.stream = newFileStream(file)
   parseHeader(self)
 
-proc flush(self : Wave) = 
+proc flush*(self : Wave) = 
   ## Flush wav file
   self.stream.flush()
 
-proc close(self : Wave) = 
+proc close*(self : Wave) = 
   ## Close wav file
   self.flush()
   self.stream.close()
   self.stream = nil
 
 
-proc isOpen(self : Wave) : bool =
+proc isOpen*(self : Wave) : bool =
   ## Returns true if the file is open
   self.stream != nil
 
-proc readFrames(self : Wave, n : int) : seq[Sample] = 
+proc readFrames*(self : Wave, n : int) : seq[Sample] = 
   ## Read n sample from file. File must already be open.
   if not self.isOpen():
     raise
@@ -232,7 +238,7 @@ proc readFrames(self : Wave, n : int) : seq[Sample] =
       sample.data.add(cast[uint8](byte))
     result.add(sample)
 
-proc readAll(self : Wave) : seq[Sample] = 
+proc readAll*(self : Wave) : seq[Sample] = 
   ## Read all samples, from current position to end.
   if not self.isOpen():
     raise
@@ -246,9 +252,13 @@ proc readAll(self : Wave) : seq[Sample] =
       sample.data.add(cast[uint8](byte))
     result.add(sample)
 
-proc rewind(self : Wave) = 
-  ## This is wrong!
-  self.stream.setPosition(0)
+proc rewind*(self : Wave) = 
+  ## Rewind strea,
+  case self.header:
+  of htNONE:
+    self.stream.setPosition(0)
+  else:
+    self.stream.setPosition(RIFF_HEADER_SIZE)
 
 
 var wav = newWave()
