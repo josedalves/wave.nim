@@ -1,4 +1,6 @@
 
+**This project is on hold, and likely will be abandoned**
+
 # wave.nim - wave file manipulations
 
 **wave.nim** provides a convenient interface for reading and writing
